@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import episodesRaw from '../episodes_1_245_utf8.txt?raw'
 import { signUp, signIn, signOut, onAuthChanged, setRating, listenToRatings, loadUsersMap } from './firebase'
 
@@ -39,32 +39,39 @@ const email = ref('')
 const password = ref('')
 const displayName = ref('')
 const authError = ref<string | null>(null)
+const appError = ref<string | null>(null)
 const user = ref<any>(null)
 const usersMap = ref<Record<string, string | null>>({})
 
 const loadUsers = async () => {
   try {
     usersMap.value = await loadUsersMap()
-  } catch (e) {
-    // ignore
+  } catch (e: any) {
+    console.error('Failed to load users map', e)
+    appError.value = 'Fehler beim Laden der Benutzerliste. Bitte Seite neu laden.'
   }
 }
 
 const applyRatingsSnapshot = (snapshotData: Record<string, any>) => {
-  // snapshotData: { '001': { uid1: 8, uid2: 7, updatedAt: ... }, ... }
-  for (const [docId, data] of Object.entries(snapshotData)) {
-    const epId = Number(docId)
-    const episode = episodes.value.find((e) => e.id === epId)
-    if (!episode) continue
-    episode.ratingsMap = {}
-    for (const [k, v] of Object.entries(data as Record<string, any>)) {
-      if (k === 'updatedAt') continue
-      episode.ratingsMap[k] = v as number | null
+  try {
+    // snapshotData: { '001': { uid1: 8, uid2: 7, updatedAt: ... }, ... }
+    for (const [docId, data] of Object.entries(snapshotData)) {
+      const epId = Number(docId)
+      const episode = episodes.value.find((e) => e.id === epId)
+      if (!episode) continue
+      episode.ratingsMap = {}
+      for (const [k, v] of Object.entries(data as Record<string, any>)) {
+        if (k === 'updatedAt') continue
+        episode.ratingsMap[k] = v as number | null
+      }
+      // set current user rating if available
+      if (user.value && episode.ratingsMap) {
+        episode.rating = episode.ratingsMap[user.value.uid] ?? null
+      }
     }
-    // set current user rating if available
-    if (user.value && episode.ratingsMap) {
-      episode.rating = episode.ratingsMap[user.value.uid] ?? null
-    }
+  } catch (e: any) {
+    console.error('Failed to apply ratings snapshot', e)
+    appError.value = 'Ein Fehler ist beim Laden der Bewertungen aufgetreten.'
   }
 }
 
@@ -72,13 +79,24 @@ const unsubscribeRatings = ref<(() => void) | null>(null)
 
 const startListening = () => {
   if (unsubscribeRatings.value) return
-  unsubscribeRatings.value = listenToRatings((snap) => {
-    applyRatingsSnapshot(snap)
-  })
+  unsubscribeRatings.value = listenToRatings(
+    (snap) => {
+      applyRatingsSnapshot(snap)
+    },
+    (error) => {
+      console.error('Ratings listener failed', error)
+      appError.value = 'Verbindung zur Datenbank konnte nicht hergestellt werden.'
+    }
+  )
 }
 
 onAuthChanged((u) => {
   user.value = u
+  if (!u) {
+    episodes.value.forEach((episode) => {
+      episode.rating = null
+    })
+  }
   // when auth state changes, ensure user map and start listening
   loadUsers()
   startListening()
@@ -88,6 +106,13 @@ onMounted(() => {
   // start listening even without auth so everyone sees live updates
   startListening()
   loadUsers()
+})
+
+onUnmounted(() => {
+  if (unsubscribeRatings.value) {
+    unsubscribeRatings.value()
+    unsubscribeRatings.value = null
+  }
 })
 
 const handleSignUp = async () => {
@@ -206,6 +231,10 @@ const getCoverUrl = (episodeId: number) => {
         </div>
 
     <div class="mt-6 grid gap-4 rounded-3xl border border-slate-800/80 bg-slate-900/80 p-4 shadow-lg shadow-slate-950/20 sm:grid-cols-[1fr_auto]">
+      <div v-if="appError" class="rounded-3xl border border-rose-500/60 bg-rose-950/80 p-4 text-rose-200 shadow-lg shadow-rose-950/20 sm:col-span-2">
+        <p class="text-sm font-semibold uppercase tracking-[0.28em] text-rose-300">Fehler</p>
+        <p class="mt-2 text-sm">{{ appError }}</p>
+      </div>
       <div>
         <p class="text-sm uppercase tracking-[0.28em] text-sky-400">Benutzer</p>
         <div class="mt-3">

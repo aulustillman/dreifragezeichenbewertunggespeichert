@@ -47,16 +47,26 @@ export const setRating = async (episodeId: string, uid: string, rating: number |
   await setDoc(docRef, data, { merge: true })
 }
 
-export const listenToRatings = (cb: (snapshotData: Record<string, any>) => void) => {
+export const listenToRatings = (
+  cb: (snapshotData: Record<string, any>) => void,
+  onError?: (error: any) => void
+) => {
   const col = collection(db, 'ratings')
   // listen to all docs in ratings collection
-  return onSnapshot(col, (querySnap) => {
-    const out: Record<string, any> = {}
-    querySnap.forEach((d) => {
-      out[d.id] = d.data()
-    })
-    cb(out)
-  })
+  return onSnapshot(
+    col,
+    (querySnap) => {
+      const out: Record<string, any> = {}
+      querySnap.forEach((d) => {
+        out[d.id] = d.data()
+      })
+      cb(out)
+    },
+    (error) => {
+      console.error('Ratings listener error', error)
+      if (onError) onError(error)
+    }
+  )
 }
 
 export const loadUsersMap = async (): Promise<Record<string, string | null>> => {
